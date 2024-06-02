@@ -152,6 +152,47 @@ PROC SORT DATA = readin NODUP DUPOUT= dup out=readin2;
 BY ID;
 RUN;
 
+
+/******************** PROC TRANSPOSE **************/
+
+proc summary data=sashelp.cars nway missing;
+class origin Drivetrain;
+var weight;
+output out = summ1 (drop = _TYPE_ _FREQ_)
+sum(weight) = total_weight
+;
+run;
+
+/*** 
+Origin will be first column, 
+Drivetrain values will be converted to individual Column 
+_name_ column renamed to measure and contains "total_weight" 
+
+***/
+
+proc transpose data = summ1 out=final(rename=(_name_ = measure) drop =_label_);
+id Drivetrain; /* convert each value of Drivetrain to Column  */
+by origin; /* stay as it is (single column) */
+run;
+
+/*** this is same summ1 **/
+proc transpose data=final
+   out=summ2 (rename=(col1=newValue _name_=newName));
+   var All Front Rear;
+   by Origin;
+run;
+
+/************************/
+
+
+
+
+
+
+
+
+
+
 /* Do Loop */
 data readin;
 do i=1 to 100;
@@ -167,3 +208,54 @@ run;
 %let last=%eval (4.5+3.2); # cannot do arithmetic operations on float
 %let last2=%sysevalf(4.5+3.2); # can works
 %put &last2;
+
+
+
+
+
+
+############################ STRING FUNCTIONs  ###################
+data new;
+
+a = 'This is Shafi';
+lower = lowcase(a);
+upper = upcase(a);
+proper = propcase(a);
+sc = scan(a,3);
+substr1 = substr(a,2,5);
+substr2 = substr(a,2);
+indx = index(a,'is');
+indxw = indexw(a,'is');
+cmprsS = compress(a,'s');
+cmprsIS = compress(a,'is');
+cmpbl  = compbl(a);
+left3 = left(a);
+right3 = right(a);
+
+cat1 = cat(a,'  new text');
+cat1s = cats(a,'  new text');
+cat1t = catt(a,'  new text');
+cat1x = catx('-',a,'new','added',' text');
+concat = a || 'new text' || a;
+rplc = tranwrd(a,'This','There');
+lngth1 = length(a);
+
+run;
+
+proc print data = new ;run;
+
+############# String based scenario ###################
+data new ;
+input name:&$25.  class$2. ;
+cards;
+shaik shafi mohiddin  6th
+khaja mohiddin shaik  7th
+reddy ravi teja  8th
+run;
+
+data want;
+set new;
+final = upcase(substr(name,1,1)) ||'.' || propcase(scan(name,2)) ||' ' || propcase(scan(name,3));
+run;
+
+proc print data =want ;run;
