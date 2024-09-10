@@ -259,3 +259,215 @@ final = upcase(substr(name,1,1)) ||'.' || propcase(scan(name,2)) ||' ' || propca
 run;
 
 proc print data =want ;run;
+
+
+################################################# THE START ##############################
+
+%let UName = 'username';
+%let UPass = 'password';
+%let DBData = 'db';
+
+libname Arw2020 "/data1/folder/sub/2020";
+
+options obs = max nocenter ls = max ps = max mergenoby=error;
+options compress = yes mprint mlogic source source2 mstored sasmstore=clog error=1;*symbolgen;
+
+%let out_loc = /data1/folder/sub/2020;
+
+
+data janArw23 (keep= col1 col2 col3 rename = (col1 = cola col2 = colb)) ;
+set Arw2023.frf_arw_jan_2023 (WHERE = (col1>0 AND col2 ="mid"));
+Format Company $10.;
+if colx = 92001 then Company = "value1"; else Company = "value12";
+run;
+
+** oracle live query **;
+proc sql;
+connect to oracle (user=&UName. password=&UPass. path=&DBData. );
+create table live_arw as select * from connection to oracle
+(
+select * from table
+);
+quit;
+
+
+
+Data Event_data;
+Set Event_query;
+If mpr_mnth = . then mpr_mnth =99;
+If mpr_yr = . then mpr_yr =9999;
+mpr_mnth = input (mpr_mnth, best32.);
+mpr_yr = input (mpr_yr, best32.);
+format MPR_MONTH best32.;
+format MPR_YEAR best32.;
+MPR_MONTH=mpr_mnth;
+MPR_YEAR=mpr_yr;
+run;
+
+proc print data=df1 (obs=6);run;
+
+proc contents data=df1 order=varnum;run;
+
+
+** Affiliation - Primary CST Dec 2022 ;
+proc summary data = decArw22 nway missing;
+class affl cust_id ;
+output out = affl_cst (drop = _type_ rename = (_freq_ = vol));
+run;
+
+proc sort data = affl_cst ; by affl descending vol ;run;
+proc sort data = affl_cst out=affl_cst_final nodupkey; by affl ; run;
+
+
+proc freq data=Arw22;
+tables seg*company*rep_group /list missing;run;
+
+
+proc summary data = janArw23 nway missing;
+class affl cust_id Company arw_seg;
+output out = affl_seg (drop = _type_ rename = (_freq_ = vol));
+run;
+
+proc sort data = df1 out=df2 nodupkey;
+by affl cust_id;
+run;
+
+
+data df1;
+merge df2 (in=a)
+df3 (in=b);
+by txn_id;
+if a;
+
+mi_merge = compress(a||b);
+format rep_flag $32.;
+if mi_merge = "10" then rep_flag = "New";
+else if mi_merge = "11" then rep_flag = "Retained";
+else rep_flag = "NA";
+run;
+
+
+*** FRFE1- for pulling Cust_seg for New reps;
+
+proc sql;
+connect to oracle (user=&UName. password=&UPass. path=&DBData. ) ;
+create table FRF_Data as select * from connection to oracle
+(
+select ent_id, Jurisdiction_Name as Juris_name, POP_Customer_seg as seg
+from fr.frf_e1@fr_rs
+
+where extract(year from GL_Date) in (2021,2022)
+and GL_Account in (400217, 400219, 400210, 270505, 420080)
+)
+;
+quit;
+
+proc sort data=FRF_Data nodupkey;
+by ent_id Juris_name;
+run;
+
+proc sql ;
+create table arw22lost as
+(
+select a.txn_id
+from Arwdec21 a
+left join Arwdec22 b
+ON a.txn_id = b.txn_id
+WHERE b.txn_id IS NULL
+);
+quit;
+
+
+
+proc import datafile='/data1/folder1/bundle/mar22/bundle_20.csv' out=bndl_mar_21
+dbms=csv replace;
+run;
+
+proc export data = final
+outfile = "/data1/folder1/Adhocs/21032023_Discount_dropoff_Affl/cst_level_jan23_Dec_Nov_oct22_cmpny_v2.csv"
+dbms = csv replace ;
+PUTNAMES=YES;
+run;
+
+
+
+proc sql;
+connect to oracle (user=&UName. password=&UPass. path=&DBData. ) ;
+create table seg_details as select * from connection to oracle
+(
+SELECT DISTINCT (a.aban8) AS cust_id,
+decode(TRIM(a.abac06),
+'200', 'Corporation', '100', 'Small Business', '300', 'Law Firm', '', 'Small Business') AS seg, a.abac16 AS Cust_Type,
+c.ccy55ac46 AS Sub_Seg_Code,
+
+FROM table
+);
+quit;
+
+proc sort data = seg_details out= seg (Keep = cust_id CST_NAME seg);
+by cust_id;
+run;
+
+
+
+/* FRF */
+libname FRFE1 "/data1/folder1/FRF_E1/Dataset/";
+
+Data FRF_E1 (keep = GL_Account ent_id Jurisdiction_Name GL_Date POP_Customer_seg POP_CST);
+set
+FRFE1.frf_e1_2023_11_nov
+FRFE1.frf_e1_2023_12_dec
+FRFE1.frf_e1_2024_01_jan
+FRFE1.frf_e1_2024_02_feb
+;
+if (GL_Account in (400217, 400219, 400210, 270505, 420080));
+run ;
+
+Data FRF_Data (keep=ent_id Juris_name Inv_Month Inv_Year POP_Customer_seg GL_Account POP_CST);
+Set FRF_E1;
+
+Format Inv_Date mmddyy10.;
+Inv_Date = datepart(GL_Date);
+
+Format Inv_Month Best2.;
+Format Inv_Year Best4.;
+Inv_Month = month(Inv_Date);
+Inv_Year = year(Inv_Date);
+
+Format Juris_Name $200.;
+Juris_name = strip(trim(compress(Upcase(Jurisdiction_Name),"","ka")));
+run;
+
+proc sort data=FRF_data;
+by ent_id Juris_Name descending Inv_year descending Inv_month;
+run;
+
+proc sort data=FRF_data nodupkey;
+by ent_id Juris_Name ;
+run;
+
+
+libname out "/data1/folder1/Adhocs/11_New_reps_lost_within_12months";
+data out.rawdata;
+set final;
+run;
+
+WbExport -file="D:UsersDownloadsexporttest_exportv1.csv" -type=text -delimiter=',';
+select *
+from table
+where col in ()
+group by
+;
+
+drop table affl_list;
+create global temporary table affl_list(
+affl_id int) on COMMIT PRESERVE ROWS;;
+
+WbImport -file='D:UsersDownloadsexportinputctac_affl_list.csv'
+-table=affl_list
+-batchSize=1000
+-filecolumns=affl_id
+-mode=insert
+-header=true
+;
+################################################# THE END ##############################
